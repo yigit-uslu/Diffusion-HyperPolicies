@@ -2,25 +2,26 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from core.config import NUM_STATES
+from core.config import NUM_STATES, VERBOSE
 
 
 class BaseEnv(nn.Module):
-    def __init__(self, device = 'cpu'):
+    def __init__(self, init_state = 0, device = 'cpu'):
         self.device = device
         self.states = torch.arange(0, NUM_STATES).to(device=device)
         self.rewards = torch.zeros_like(self.states)
-        self.state = 0
+        self.init_state = init_state
+        self.state = init_state
         self.done = False
 
     def reset(self):
-        self.state = 0
+        self.state = torch.randint(low=self.states.min(), high=self.states.max() + 1, size = (1,))
         self.done = False
         return self.state
     
 
     def step(self, action):
-        if self.done:
+        if self.done and VERBOSE >= 1:
             raise ValueError("Episode has ended.")
         
         # Define state-action-state transitions
@@ -48,6 +49,7 @@ class BaseEnv(nn.Module):
 
 
     def raise_invalid_action_error(self, action):
-        raise ValueError(f"Action {action} is not allowed at state {self.state}.")
+        if VERBOSE >= 1:
+            raise ValueError(f"Action {action} is not allowed at state {self.state}.")
 
         
