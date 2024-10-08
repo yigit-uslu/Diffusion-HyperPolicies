@@ -3,13 +3,13 @@ import torch.nn as nn
 import numpy as np
 from torch_geometric.utils.repeat import repeat
 
-from core.config import NUM_STATES, VERBOSE, LAMBDAS_MAX
+from core.config import config
 
 
 class OraclePolicy(nn.Module):
-    def __init__(self, c = 1 / NUM_STATES,  device = 'cpu'):
+    def __init__(self, c = 1 / config.num_states,  device = 'cpu'):
         super(OraclePolicy, self).__init__()
-        self.c = repeat(c, NUM_STATES)
+        self.c = repeat(c, config.num_states)
         self.device = device
 
     def weighted_reward(self, x, lambdas):
@@ -21,7 +21,7 @@ class OraclePolicy(nn.Module):
         assert len(lambdas) == 2
 
         if torch.all(lambdas < 1):
-            if VERBOSE >= 2:
+            if config.verbose >= 2:
                 print('Optimal deterministic policy maximizes time spent at state 0.')
             if x == 0:
                 action = np.random.choice([1, 2]).item() # wlog choose between a nonzero action.
@@ -30,7 +30,7 @@ class OraclePolicy(nn.Module):
 
 
         elif torch.all(lambdas == 1):
-            if VERBOSE >= 2:
+            if config.verbose >= 2:
                 print('All deterministic policies are optimal.')
             if x == 0:
                 action = 1
@@ -41,7 +41,7 @@ class OraclePolicy(nn.Module):
 
 
         elif lambdas[0] > lambdas[1] and lambdas[0] > 1:
-            if VERBOSE >= 2:
+            if config.verbose >= 2:
                 print('Optimal deterministic policy maximizes time spent at state 1.')
             if x in [0, 1]:
                 action = 1
@@ -50,7 +50,7 @@ class OraclePolicy(nn.Module):
 
 
         elif lambdas[1] > lambdas[0] and lambdas[1] > 1:
-            if VERBOSE >= 2:
+            if config.verbose >= 2:
                 print('Optimal deterministic policy maximizes time spent at state 2.')
             if x in [0, 2]:
                 action = 2
@@ -80,11 +80,10 @@ class Agent(nn.Module):
         action = np.random.choice(len(probs.detach().cpu().numpy().flatten()), p = probs.detach().cpu().numpy().flatten())
 
         return action
-    
 
 
 class LambdaSampler(nn.Module):
-    def __init__(self, lambdas_max = LAMBDAS_MAX, n_lambdas = NUM_STATES - 1, device = 'cpu'):
+    def __init__(self, lambdas_max = config.lambdas_max, n_lambdas = config.num_states - 1, device = 'cpu'):
         self.device = device
         self.lambdas_max = lambdas_max
         self.n_lambdas = n_lambdas
@@ -92,6 +91,16 @@ class LambdaSampler(nn.Module):
     # def forward(self, n_samples):
     #     return self.sample(n_samples=n_samples)
 
-    def sample(self, n_samples = 1):
-        lambdas = self.lambdas_max * torch.rand(size = (n_samples, self.n_lambdas), dtype = torch.float32, device=self.device)
+    def sample(self, n_samples = 1, flip_symmetry = True):
+        assert n_samples % 2 == 0 or n_samples == 1, "The number of samples should be an even number or 1."
+
+        if flip_symmetry and not n_samples == 1:
+            lambdas = self.lambdas_max * torch.rand(size = (n_samples // 2, self.n_lambdas), dtype = torch.float32, device=self.device)
+            perm = torch.randperm(lambdas.shape[0])
+            lambdas_mirrored = torch.flip(lambdas, dims = (-1,))[perm].to(self.device)
+            lambdas = torch.cat([lambdas, lambdas_mirrored], dim = 0)
+        else:
+            lambdas = self.lambdas_max * torch.rand(size = (n_samples, self.n_lambdas), dtype = torch.float32, device=self.device)
+            
         return lambdas
+    
