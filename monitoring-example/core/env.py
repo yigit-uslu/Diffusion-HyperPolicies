@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+from utils.utils import has_len_attribute
 
 from core.config import config
 
@@ -51,5 +52,38 @@ class BaseEnv(nn.Module):
     def raise_invalid_action_error(self, action):
         if config.verbose >= 1:
             raise ValueError(f"Action {action} is not allowed at state {self.state}.")
+        
+
+    def get_invalid_action_mask(self, states):
+
+        if not has_len_attribute(states):
+            states = [states]
+
+        all_mask = []
+        for state in states:
+            invalid_action_mask_arr = []
+            for action in range(len(self.states)):
+                if state == 0:
+                    if action == 0:
+                        mask = 1
+                    else:
+                        mask = 0
+
+                else:
+                    if action not in [0, state]:
+                        mask = 1
+                    else:
+                        mask = 0
+
+                invalid_action_mask_arr.append(mask)
+
+            all_mask.append(torch.LongTensor(invalid_action_mask_arr))
+
+        print('all_mask[0].shape: ', all_mask[0].shape)
+        return torch.stack(all_mask, dim = 0).to(device=self.device)
+
+            
+
+
 
         

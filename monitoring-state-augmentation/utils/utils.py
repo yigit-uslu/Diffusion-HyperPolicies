@@ -19,6 +19,16 @@ def has_len_attribute(obj):
         return True
     except TypeError:
         return False
+    
+
+def epsilon_decay_formula(episode, epsilon_init = 0.1, decay_rate = 0.99, epsilon_min = 0.01):
+    epsilon = max(epsilon_min, epsilon_init * decay_rate ** episode)
+    return epsilon
+
+
+def temperature_decay_formula(episode, T_init = 1.0, decay_rate = 0.99, T_min = 0.1):
+    T = max(T_min, T_init * decay_rate ** episode)
+    return T
 
 
 
