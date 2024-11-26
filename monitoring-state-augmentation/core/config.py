@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-config_dict = {"experiment_name": "dynamic-importance-sampling",
+config_dict = {"experiment_name": "dynamic-importance-sampling-tau=5",
                "num_states": 3,
                "num_episodes": 500,
                "num_timesteps": 100,
