@@ -4,13 +4,14 @@ import math
 from matplotlib import pyplot as plt
 import numpy as np
 import torch
+import torch.optim as optim
 import random
 import os
 from numpy import linalg as LA
 from torch_geometric.data import Data, Dataset
 import tqdm
+import abc
 from sklearn.datasets import make_swiss_roll
-
 
 
 def has_len_attribute(obj):
@@ -30,6 +31,56 @@ def temperature_decay_formula(episode, T_init = 1.0, decay_rate = 0.99, T_min = 
     T = max(T_min, T_init * decay_rate ** episode)
     return T
 
+
+class CustomLRScheduler(abc.ABC):
+    def __init__(self, lr_init, step_size, gamma):
+        self.lr = lr_init
+        self.step_size = step_size  # Number of epochs after which to decay the LR
+        self.gamma = gamma  # Factor by which to decay the LR
+        self.data = []
+
+    def update_lr_history(self, new_data):
+        self.data.append(new_data)
+
+    def get_lr(self, epoch):
+        """Get the learning rate based on the epoch."""
+        # Step decay: Decay the LR every `step_size` epochs by a factor of `gamma`
+        lr = self.lr * (self.gamma ** (epoch // self.step_size))
+
+        self.update_lr_history((epoch, lr))
+
+        return lr
+
+    def log_lr(self):
+
+        epochs = np.array(self.data[0])
+        lrs = np.array(self.data[1])
+        
+        fig, ax = plt.subplots(1, 1, figsize = (6, 6))
+        ax.plot(epochs, lrs)
+        ax.grid(True)
+        ax.set_xlabel('Epoch (k)')
+    
+
+def make_kl_regularization_decay_scheduler(config, schedule = "linear", device = "cpu"):
+    
+    if schedule == "linear":
+        tau_scheduler = CustomLRScheduler(lr_init=min(config.tau, 1e-2), step_size=5, gamma=1.1)
+    else:
+        raise NotImplementedError
+    
+
+    return tau_scheduler
+
+
+def make_lr_scheduler(optimizer, config, schedule = "linear"):
+    if schedule == "linear":
+        lr_lambda = lambda epoch: 1 - epoch / config.num_epochs
+        lr_scheduler = optim.lr_scheduler.LambdaLR(optimizer=optimizer, lr_lambda=lr_lambda)
+    else:
+        raise NotImplementedError
+    
+    return lr_scheduler
 
 
 def make_beta_schedule(schedule='linear', n_timesteps=1000, start=1e-5, end=0.5e-2):

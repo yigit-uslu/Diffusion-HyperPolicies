@@ -6,7 +6,7 @@ import random
 from torch_geometric.utils.repeat import repeat
 from torch_scatter import scatter
 from utils.model_utils import SinusoidalTimeEmbedding, AugmentedBlock
-from utils.logger_utils import RLTrainAugRewardsLogger, RLTrainLossLogger, RLTrainPGradNormLogger, RLQTableLogger, RLTrainRewardsLogger
+from utils.logger_utils import RLTrainAugRewardsLogger, RLTrainLossLogger, RLTrainPGradNormLogger, RLQTableLogger, RLTrainRewardsLogger, make_rl_train_loggers
 
 from core.config import config
 
@@ -143,13 +143,12 @@ class DQNAgent(nn.Module):
         self.c = torch.FloatTensor([0, 1/3, 1/3]).to(device=device)
 
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=config.lr, weight_decay=config.weight_decay)
-        self.lr_scheduler = optim.lr_scheduler.ExponentialLR(optimizer=self.optimizer, gamma=0.99)
+        # self.lr_scheduler = optim.lr_scheduler.ExponentialLR(optimizer=self.optimizer, gamma=0.99)
 
         # Linear decay function: lr = lr_init * (1 - t / total_epochs)
         lr_lambda = lambda epoch: 1 - epoch / config.num_episodes
 
         self.lr_scheduler = optim.lr_scheduler.LambdaLR(optimizer=self.optimizer, lr_lambda=lr_lambda)
-
         
         self.memory = []  # A simple list to store experience tuples
         self.gamma = config.gamma # 0.99  # Discount factor for future rewards
@@ -165,22 +164,8 @@ class DQNAgent(nn.Module):
     #         # lambdas_tensor = torch.FloatTensor(lambdas)
     #         q_values = self.policy_net(state.to(self.device), lambdas.to(self.device))
     #         return torch.argmax(q_values).item()  # Best action (exploitation)
-        
-        self.loggers = []
-        logger = RLTrainLossLogger(data = [], log_path=f"./logs/{EXPERIMENT_NAME}")
-        self.loggers.append(logger)
 
-        logger = RLTrainAugRewardsLogger(data = [], log_path = f"./logs/{EXPERIMENT_NAME}")
-        self.loggers.append(logger)
-
-        logger = RLTrainRewardsLogger(data = [], log_path = f"./logs/{EXPERIMENT_NAME}")
-        self.loggers.append(logger)
-
-        logger = RLTrainPGradNormLogger(data = [], log_path = f"./logs/{EXPERIMENT_NAME}")
-        self.loggers.append(logger)
-
-        logger = RLQTableLogger(data = [], log_path = f"./logs/{EXPERIMENT_NAME}")
-        self.loggers.append(logger)
+        self.loggers = make_rl_train_loggers(log_path = f"./logs/{EXPERIMENT_NAME}/rl-train")
         
 
     def select_action(self, augmented_state, action_mask = None):
@@ -297,7 +282,6 @@ class DQNAgent(nn.Module):
         # Periodically update the target network
         self.target_net.load_state_dict(self.policy_net.state_dict())
 
-
         # Create a Q-table
         Q = np.zeros((config.num_states, config.num_states))
         for state in range(Q.shape[0]):
@@ -308,14 +292,10 @@ class DQNAgent(nn.Module):
                     Q[state, action] = q[action].detach().cpu().numpy()
                 except:
                     Q[state, action] = 0.
-
         
-
         # print('Q(s, a, \lambda = 0): ', Q)
 
         self.log({'epoch': epoch , 'Q_values': Q, 'loss': loss.mean(), 'pgrad_norm': pgrad_norm.mean(), 'aug_rewards': aug_rewards.mean(), 'rewards': rewards.mean(dim = (0, 1)).detach().cpu().numpy()})
-
-
         return loss, aug_rewards
 
 
@@ -324,29 +304,4 @@ class DQNAgent(nn.Module):
         for logger in self.loggers:
             logger.update_data(log_variables)
             logger()
-
-
-
-
-class LambdaSampler(nn.Module):
-    def __init__(self, lambdas_max = config.lambdas_max, n_lambdas = config.num_states - 1, device = 'cpu'):
-        self.device = device
-        self.lambdas_max = lambdas_max
-        self.n_lambdas = n_lambdas
-
-    # def forward(self, n_samples):
-    #     return self.sample(n_samples=n_samples)
-
-    def sample(self, n_samples = 1, flip_symmetry = True):
-        assert n_samples % 2 == 0 or n_samples == 1, "The number of samples should be an even number or 1."
-
-        if flip_symmetry and not n_samples == 1:
-            lambdas = self.lambdas_max * torch.rand(size = (n_samples // 2, self.n_lambdas), dtype = torch.float32, device=self.device)
-            perm = torch.randperm(lambdas.shape[0])
-            lambdas_mirrored = torch.flip(lambdas, dims = (-1,))[perm].to(self.device)
-            lambdas = torch.cat([lambdas, lambdas_mirrored], dim = 0)
-        else:
-            lambdas = self.lambdas_max * torch.rand(size = (n_samples, self.n_lambdas), dtype = torch.float32, device=self.device)
-            
-        return lambdas
     

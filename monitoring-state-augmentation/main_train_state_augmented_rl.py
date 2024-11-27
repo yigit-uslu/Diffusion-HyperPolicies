@@ -1,10 +1,10 @@
 import torch
 import tqdm
 from core.env import BaseEnv
-from core.policy import DQNAgent, LambdaSampler
+from core.policy import DQNAgent
 from core.config import config
-from utils.data_utils import importance_sampler
-from utils.logger_utils import LambdasImportanceSamplerLogger
+from utils.data_utils import LambdaSampler, importance_sampler
+from utils.logger_utils import LagrangiansImportanceSamplerLogger
 from utils.utils import epsilon_decay_formula, temperature_decay_formula
 
 def main():
@@ -20,15 +20,17 @@ def main():
     n_lambdas = config.batch_size_lambdas # 5
 
     epsilon_init = agent.epsilon
+    
+    flip_symmetry = True
 
     # Training loop
 
     lambdas_sampler = LambdaSampler(lambdas_max=config.lambdas_max, n_lambdas=len(env.states) - 1, device=device)
     lambdas_weights = torch.ones((n_lambdas,)).to(lambdas_sampler.device)
 
-    importance_sampler_logger = LambdasImportanceSamplerLogger(data = [], log_path=f"./logs/{config.experiment_name}")
+    importance_sampler_logger = LagrangiansImportanceSamplerLogger(data = [], log_path=f"./logs/{config.experiment_name}")
 
-    lambdas = lambdas_sampler.sample(n_samples=n_lambdas, flip_symmetry=False) # reference Unif distribution
+    lambdas = lambdas_sampler.sample(n_samples=n_lambdas, flip_symmetry=flip_symmetry) # reference Unif distribution
 
 
     for episode in tqdm.tqdm(range(num_episodes)):
@@ -43,14 +45,19 @@ def main():
                                         #    Y_0=lagrangians_all,
                                                Y_0=None,
                                                weights=lambdas_weights, # unfiorm initially
-                                               batch_size=n_lambdas,
+                                               batch_size=n_lambdas // 2 if flip_symmetry else n_lambdas,
                                                replacement=True
                                                )
         # for data in lambdas_star_dataloader:
             # lambdas = data[0]
         lambdas = next(iter(lambdas_star_dataloader))[0]
 
-        print("lambdas.shape: ", lambdas.shape)
+        if flip_symmetry:
+            perm = torch.randperm(lambdas.shape[0])
+            lambdas_mirrored = torch.flip(lambdas, dims = (-1,))[perm].to(lambdas.device)
+            lambdas = torch.cat([lambdas, lambdas_mirrored], dim = 0)
+
+        # print("lambdas.shape: ", lambdas.shape)
         
 
         ############################ BEGIN: RL-Policy Update #################################
@@ -95,9 +102,8 @@ def main():
 
 
         ############################ BEGIN: Diffusion Hyper-Policy Update #################################
-
-        tau = 5.0
-        lagrangians = -torch.stack(all_aug_rewards, dim = 0).mean(0).view(n_lambdas, -1).mean(-1) # expected lagrangian
+        tau = episode * (10. / num_episodes)
+        lagrangians = torch.stack(all_aug_rewards, dim = 0).mean(0).view(n_lambdas, -1).mean(-1) # expected lagrangian
         lambdas_weights = (-tau * lagrangians).exp() / (-tau * lagrangians).exp().mean()
 
         weighted_avg_lagrangian = (lagrangians * lambdas_weights).mean()
@@ -106,6 +112,8 @@ def main():
         importance_sampler_logger()
 
         # diffusion_loss, diffusion_weights = diffusion_learner.optimize()
+
+        
 
 
         ############################ END: Diffusion Hyper-Policy Update #################################
