@@ -10,13 +10,13 @@ from core.config import config
 EXPERIMENT_NAME = config.experiment_name
 
 class BaseDiffusionLearner(abc.ABC):
-    def __init__(self, device, **kwargs):
+    def __init__(self, device, config):
         self.device = device
-        self.beta_schedule = kwargs.get('beta_schedule', 'cosine')
-        self.diffusion_steps = kwargs.get('diffusion_steps', 500)
-        self.beta_min = kwargs.get('beta_min', 0.1)
-        self.beta_max = kwargs.get('beta_max', 20)
-        self.cosine_s = kwargs.get('cosine_s', 0.008)
+        self.beta_schedule = config.beta_schedule if hasattr(config, "beta_schedule") and config.beta_schedule is not None else "cosine"
+        self.diffusion_steps = config.diffusion_steps if hasattr(config, "diffusion_steps") and config.diffusion_steps is not None else 500
+        self.beta_min = config.beta_min if hasattr(config, "beta_min") and config.beta_min is not None else 0.1
+        self.beta_max = config.beta_max if hasattr(config, "beta_max") and config.beta_max is not None else 20
+        self.cosine_s = config.cosine_s if hasattr(config, "cosine_s") and config.cosine_s is not None else 0.008
         self.prior = torch.randn
 
         if self.beta_schedule == 'linear':
@@ -102,7 +102,7 @@ class DiffusionLearner(BaseDiffusionLearner):
     def __init__(self, config, device = 'cpu'):
         self.config = config
         self.device = device
-        super(DiffusionLearner, self).__init__(device=device, kwargs=vars(config) if isinstance(config, Namespace) else config)
+        super(DiffusionLearner, self).__init__(device=device, config = config)
 
         self.loggers = make_dm_train_loggers(log_path=f"./logs/{EXPERIMENT_NAME}/dm-train")
 
@@ -138,7 +138,7 @@ class DiffusionLearner(BaseDiffusionLearner):
 
         self.log({"epoch": epoch, "loss": loss.mean(), 'pgrad_norm': pgrad_norm.mean()})
 
-        return model, optimizer, lr_scheduler
+        return model, optimizer, lr_scheduler, loss.mean().item()
     
 
     def log(self, log_variables):

@@ -13,6 +13,8 @@ import tqdm
 import abc
 from sklearn.datasets import make_swiss_roll
 
+from core.config import default_log_freq_dm
+
 
 def has_len_attribute(obj):
     try:
@@ -33,11 +35,14 @@ def temperature_decay_formula(episode, T_init = 1.0, decay_rate = 0.99, T_min = 
 
 
 class CustomLRScheduler(abc.ABC):
-    def __init__(self, lr_init, step_size, gamma):
-        self.lr = lr_init
+    def __init__(self, lr_start = 1e-1, lr_end = None, step_size = 5, gamma = 1.1, log_path = None, log_metric = 'tau'):
+        self.lr = lr_start
+        self.lr_end = lr_end
         self.step_size = step_size  # Number of epochs after which to decay the LR
         self.gamma = gamma  # Factor by which to decay the LR
         self.data = []
+        self.log_path = log_path 
+        self.log_metric = log_metric
 
     def update_lr_history(self, new_data):
         self.data.append(new_data)
@@ -47,25 +52,49 @@ class CustomLRScheduler(abc.ABC):
         # Step decay: Decay the LR every `step_size` epochs by a factor of `gamma`
         lr = self.lr * (self.gamma ** (epoch // self.step_size))
 
-        self.update_lr_history((epoch, lr))
+        if self.lr_end is not None:
+            if self.gamma > 1.0:
+                lr = min(lr, self.lr_end)
+            else:
+                lr = max(lr, self.lr_end)
 
+        self.update_lr_history((epoch, lr))
         return lr
+    
+    @property
+    def log_freq(self):
+        return default_log_freq_dm
+
 
     def log_lr(self):
 
-        epochs = np.array(self.data[0])
-        lrs = np.array(self.data[1])
+        if not len(self.data):
+            return
         
-        fig, ax = plt.subplots(1, 1, figsize = (6, 6))
-        ax.plot(epochs, lrs)
-        ax.grid(True)
-        ax.set_xlabel('Epoch (k)')
+        epochs, lrs = zip(*self.data)
+
+        epochs = np.array(epochs)
+        lrs = np.array(lrs)
+
+        if self.log_path is not None and (epochs[-1] + 1) % self.log_freq == 0:
+            fig, ax = plt.subplots(1, 1, figsize = (6, 6))
+            ax.plot(epochs, lrs)
+            ax.grid(True)
+            ax.set_xlabel(r'Epoch ($n$)')
+            ax.set_ylabel(r"KL-regularization parameter $\tau$")
+
+            fig.tight_layout()
+
+            os.makedirs(f"{self.log_path}", exist_ok=True)
+            plt.savefig(f'{self.log_path}/{self.log_metric}.pdf', dpi = 300)
+            plt.close(fig)
+        
     
 
 def make_kl_regularization_decay_scheduler(config, schedule = "linear", device = "cpu"):
     
     if schedule == "linear":
-        tau_scheduler = CustomLRScheduler(lr_init=min(config.tau, 1e-2), step_size=5, gamma=1.1)
+        tau_scheduler = CustomLRScheduler(lr_end=config.tau, step_size=config.tau_step, gamma=config.tau_gamma, log_path = f"./logs/{config.experiment_name}", log_metric = "tau")
     else:
         raise NotImplementedError
     

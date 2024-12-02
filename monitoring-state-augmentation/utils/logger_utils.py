@@ -3,7 +3,22 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import torch
+import pandas as pd
+import seaborn as sns
 from torch_scatter import scatter
+
+from core.config import default_log_freq_rl, default_log_freq_dm
+
+
+plt.rcParams.update({
+    'font.size': 12,
+    'text.usetex': True,
+    'text.latex.preamble': r'\usepackage{amsfonts}',
+
+})
+
+plt.style.use('bmh')
+
 
 
 class Logger(abc.ABC):
@@ -33,7 +48,7 @@ class Logger(abc.ABC):
 
     @property
     def log_freq(self):
-        return 50
+        return default_log_freq_rl
     
 
 
@@ -52,6 +67,9 @@ class RLTrainLossLogger(Logger):
         super().update_data( (epoch, data) )
 
     def __call__(self):
+
+        if not len(self.data):
+            return
         
         try:
             epochs, L = zip(*self.data)
@@ -99,7 +117,14 @@ class DiffusionTrainLossLogger(Logger):
         data = new_data[self.log_metric].mean().item()
         super().update_data( (epoch, data) )
 
+    @property
+    def log_freq(self):
+        return default_log_freq_dm
+
     def __call__(self):
+
+        if not len(self.data):
+            return
         
         try:
             epochs, L = zip(*self.data)
@@ -133,10 +158,76 @@ class DiffusionTrainLossLogger(Logger):
 
 
 
+class LambdaScatterLogger(Logger):
+    def __init__(self, data, log_path):
+        super(LambdaScatterLogger, self).__init__(data=data, log_metric='scatter-lambdas', log_path=log_path)
+
+    @property
+    def log_freq(self):
+        return default_log_freq_dm
+
+    def update_data(self, new_data):
+        self.reset_data() # do not concatenate results along epochs
+
+        if self.log_metric not in new_data:
+            return
+        
+        if 'epoch' in new_data:
+            epoch = new_data['epoch']
+        
+        data = new_data[self.log_metric]
+        super().update_data( (epoch, data) )
+
+
+    @property
+    def log_freq(self):
+        return default_log_freq_dm
+
+
+    def __call__(self):
+
+        if not len(self.data):
+            return
+        
+        epoch, lambdas = zip(*self.data)
+        epoch = epoch[0]
+        lambdas = lambdas[0]
+
+        if isinstance(lambdas, tuple):
+            lambdas, lambdas_orig = lambdas
+        else:
+            lambdas_orig = None
+
+        df_lambdas = pd.DataFrame(lambdas, columns = [r"$\lambda_1$", r"$\lambda_2$"]) if lambdas is not None else None
+        df_lambdas_orig = pd.DataFrame(lambdas_orig, columns = [r"$\lambda_1$", r"$\lambda_2$"]) if lambdas_orig is not None else None
+
+
+        if self.log_path is not None and (epoch + 1) % self.log_freq == 0: # and epochs.max().item() + 1 % self.log_freq == 0:
+
+            fig, ax = plt.subplots(1, 1, figsize = (8, 4))
+
+            if df_lambdas is not None:
+                sns.scatterplot(x=df_lambdas[r"$\lambda_1$"], y=df_lambdas[r"$\lambda_2$"], marker = '1', alpha = 0.5, label = r"DDPM-sampled $\lambda$", ax = ax)
+
+            if df_lambdas_orig is not None:
+                sns.scatterplot(x=df_lambdas_orig[r"$\lambda_1$"], y=df_lambdas_orig[r"$\lambda_2$"], marker = "o", alpha = 0.5, label = r"Imp.-sampled $\lambda$", ax = ax)
+           
+
+            ax.set_ylabel(self.log_metric)
+            ax.grid(True)
+            fig.tight_layout()
+
+            os.makedirs(f"{self.log_path}", exist_ok=True)
+            plt.savefig(f'{self.log_path}/{self.log_metric}-epoch-{epoch}.pdf', dpi = 300)
+            plt.close(fig)
+
+
+
 class RLTrainPGradNormLogger(RLTrainLossLogger):
     def __init__(self, data, log_path):
         super().__init__(data, log_path)
         self.log_metric = 'pgrad_norm'
+
 
 class DiffusionTrainPGradNormLogger(DiffusionTrainLossLogger):
     def __init__(self, data, log_path):
@@ -168,6 +259,9 @@ class RLTrainRewardsLogger(RLTrainLossLogger):
 
 
     def __call__(self):
+
+        if not len(self.data):
+            return
 
         try:
             epochs, L = zip(*self.data)
@@ -228,6 +322,9 @@ class RLQTableLogger(Logger):
 
     def __call__(self):
 
+        if not len(self.data):
+            return
+
         epoch, Q = zip(*self.data)
         epoch = epoch[0]
         Q = Q[0]
@@ -276,6 +373,9 @@ class LagrangiansImportanceSamplerLogger(Logger):
         super().update_data( (epoch, data) )
 
     def __call__(self):
+
+        if not len(self.data):
+            return
         
         try:
             epochs, L = zip(*self.data)
@@ -338,6 +438,9 @@ def make_dm_train_loggers(log_path):
     loggers.append(logger)
 
     logger = DiffusionTrainPGradNormLogger(data=[], log_path=log_path)
+    loggers.append(logger)
+
+    logger = LambdaScatterLogger(data = [], log_path=log_path)
     loggers.append(logger)
 
     return loggers

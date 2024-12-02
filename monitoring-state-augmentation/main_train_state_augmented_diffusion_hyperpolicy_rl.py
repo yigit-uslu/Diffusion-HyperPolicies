@@ -4,10 +4,11 @@ from core.Diffusion import DiffusionLearner
 from core.env import BaseEnv
 from core.policy import DQNAgent
 from core.config import config
-from utils.data_utils import LambdaNormalization, LambdaSampler, WeightedLambdaSampler
-from utils.logger_utils import LagrangiansImportanceSamplerLogger, make_dm_loggers
+from utils.data_utils import LambdaNormalization, LambdaSampler, SequentialWeightedLambdaSampler, WeightedLambdaSampler
+from utils.logger_utils import LagrangiansImportanceSamplerLogger, make_dm_train_loggers
 from utils.model_utils import make_diffusion_model_optimizer_and_lr_scheduler
 from utils.utils import epsilon_decay_formula, temperature_decay_formula, make_kl_regularization_decay_scheduler
+
 
 def main():
 
@@ -15,13 +16,15 @@ def main():
     print('device; ', device)
 
     env = BaseEnv(device=device) # monitoring environment
-    agent = DQNAgent(device=device) # agent
+    agent = DQNAgent(num_features_list=config.dqn_num_features_list, device=device) # agent
 
 
     hyperpolicy_learner = DiffusionLearner(config=config.diffusion_config, device=device)
+
+    lambdas_norm = LambdaNormalization()
     
     dm_model, is_dm_model_trained, dm_optimizer, dm_lr_scheduler = \
-        make_diffusion_model_optimizer_and_lr_scheduler(config=config, device=device)
+        make_diffusion_model_optimizer_and_lr_scheduler(config=config.diffusion_config, device=device)
     
     tau_scheduler = make_kl_regularization_decay_scheduler(config=config, device=device)
     
@@ -39,14 +42,16 @@ def main():
     lambdas = uniform_lambdas_sampler.sample(n_samples=n_lambdas, flip_symmetry=flip_symmetry) # reference Uniform distribution
     importance_weights = uniform_lambdas_weights.clone()
 
+    lambdas_seq_importance_sampler = SequentialWeightedLambdaSampler(samples=lambdas, weights=importance_weights, alpha=config.lambdas_sampler_alpha, device=device)
     lagrangian_importance_sampler_logger = LagrangiansImportanceSamplerLogger(data = [], log_path=f"./logs/{config.experiment_name}")
+
 
     for episode in tqdm.tqdm(range(num_episodes)):
         state, done = env.reset(n_states=n_lambdas)
 
         ### Sample state-augmenting dual multipliers ###
-        lambdas_importance_sampler = WeightedLambdaSampler(samples=lambdas, weights=torch.ones_like(importance_weights), device=device)
-        lambdas = lambdas_importance_sampler.sample(n_samples=n_lambdas, flip_symmetry=flip_symmetry)
+        # lambdas_importance_sampler = WeightedLambdaSampler(samples=lambdas, weights=torch.ones_like(importance_weights), device=device)
+        # lambdas = lambdas_importance_sampler.sample(n_samples=n_lambdas, flip_symmetry=flip_symmetry)
         
 
         ############################ BEGIN: RL-Policy Update #################################
@@ -79,8 +84,8 @@ def main():
                                               )
         
         agent.exploration_temperature = temperature_decay_formula(episode = episode,
-                                                                  T_init = 1.,
-                                                                  T_min = .1,
+                                                                  T_init = config.exploration_temperature,
+                                                                  T_min = .01,
                                                                   decay_rate=0.99
                                                                   )
         
@@ -108,27 +113,51 @@ def main():
         lagrangian_importance_sampler_logger.update_data({'epoch': episode, 'importance-sampled-lagrangian': weighted_avg_lagrangian})
         lagrangian_importance_sampler_logger()
 
-        lambdas_importance_sampler = WeightedLambdaSampler(samples=lambdas, weights=importance_weights, device=device)
-        lambdas_norm = LambdaNormalization()
-        # X = lambdas_norm(weighted_lambdas_all).to(device) # standardized dataset
-        # X_0 = lambdas_norm.reverse(X).to(device) # normalized dataset
-
-        dm_model, dm_optimizer, dm_lr_scheduler = hyperpolicy_learner.optimize(epoch=episode,
-                                                                               model=dm_model,
-                                                                               optimizer=dm_optimizer,
-                                                                               lr_scheduler=dm_lr_scheduler,
-                                                                               loss_fn=torch.nn.MSELoss(),
-                                                                               sampler=lambdas_importance_sampler,
-                                                                               lambdas_norm=lambdas_norm,
-                                                                               device=device,
-                                                                               loggers=None
-                                                                               )
+        # lambdas_importance_sampler = WeightedLambdaSampler(samples=lambdas, weights=importance_weights, device=device)
+        lambdas_seq_importance_sampler.update_samples(samples=lambdas, weights=importance_weights)
         
-        xgen, _ = hyperpolicy_learner.sample_ddpm(model=dm_model, nsamples=n_lambdas, nfeatures=lambdas.shape[-1], device=device)
-        lambdas = lambdas_norm.reverse(xgen).to(device)
-        lambdas = lambdas.data.clamp_(min = 0)
+
+        dm_model, dm_optimizer, dm_lr_scheduler, dm_loss = hyperpolicy_learner.optimize(epoch=episode,
+                                                                                        model=dm_model,
+                                                                                        optimizer=dm_optimizer,
+                                                                                        lr_scheduler=dm_lr_scheduler,
+                                                                                        loss_fn=torch.nn.MSELoss(),
+                                                                                        lambdas_sampler=lambdas_seq_importance_sampler,
+                                                                                        lambdas_norm=lambdas_norm,
+                                                                                        device=device
+                                                                                        )
+        
+        dm_lr_scheduler.step()
+        
+        if dm_loss > config.diffusion_loss_thresh:
+            print(f"Epoch = {episode}\tDm_loss = {dm_loss} > {config.diffusion_loss_thresh} = required threshold.")
+            # lambdas = uniform_lambdas_sampler.sample(n_samples=n_lambdas, flip_symmetry=flip_symmetry) # reference Uniform distribution
+            lambdas = lambdas_seq_importance_sampler.sample(n_samples=n_lambdas, flip_symmetry=flip_symmetry) # reference Uniform distribution
+
+            ### Inspect diffusion model generations ###
+            for logger in (logger for logger in hyperpolicy_learner.loggers if logger.log_metric == 'scatter-lambdas'):
+                logger.update_data({"epoch": episode, "scatter-lambdas": (None, lambdas_seq_importance_sampler.sample(n_samples=lambdas.shape[0], flip_symmetry=False).detach().cpu().numpy())})
+                logger()
+
+            pass
+
+        else:
+            print(f"Epoch = {episode}\ttau = {tau}\tDm_loss = {dm_loss} < {config.diffusion_loss_thresh} = required threshold. Sampling dual multipliers from diffusion-hyperpolicy.")
+            ### Generate lambdas to be sampled by the state-augmented rl-policy optimization in next epoch ###
+            
+            xgen, _ = hyperpolicy_learner.sample_ddpm(model=dm_model, nsamples=n_lambdas, nfeatures=lambdas.shape[-1], device=device)
+            lambdas = lambdas_norm.reverse(xgen).to(device)
+
+            ### Inspect diffusion model generations ###
+            for logger in (logger for logger in hyperpolicy_learner.loggers if logger.log_metric == 'scatter-lambdas'):
+                logger.update_data({"epoch": episode, "scatter-lambdas": (lambdas.detach().cpu().numpy(), lambdas_seq_importance_sampler.sample(n_samples=lambdas.shape[0], flip_symmetry=False).detach().cpu().numpy())})
+                logger()
+
+            lambdas = lambdas.data.clamp_(min = 0, max = config.lambdas_max)
 
         ############################ END: Diffusion Hyper-Policy Update #################################
+            
+        tau_scheduler.log_lr()
 
     print("Training finished.")
     

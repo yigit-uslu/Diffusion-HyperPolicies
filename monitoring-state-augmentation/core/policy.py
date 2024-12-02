@@ -133,11 +133,11 @@ class Agent(nn.Module):
     
 
 class DQNAgent(nn.Module):
-    def __init__(self, device = 'cpu'):
+    def __init__(self, num_features_list, device = 'cpu'):
         super().__init__()
         self.device = device
-        self.policy_net = DQNPolicy(device=device).to(device=self.device)
-        self.target_net = DQNPolicy(device=device).to(device=self.device)
+        self.policy_net = DQNPolicy(num_features_list=num_features_list, device=device).to(device=self.device)
+        self.target_net = DQNPolicy(num_features_list=num_features_list, device=device).to(device=self.device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
 
         self.c = torch.FloatTensor([0, 1/3, 1/3]).to(device=device)
@@ -273,6 +273,8 @@ class DQNAgent(nn.Module):
         # Backpropagation and optimization
         self.optimizer.zero_grad()
         loss.backward()
+
+        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), 50.)
 
         params = [p for p in self.policy_net.parameters() if p.grad is not None and p.requires_grad]
         pgrad_norm = np.sqrt(np.sum([p.grad.norm().item()**2 for p in params]))

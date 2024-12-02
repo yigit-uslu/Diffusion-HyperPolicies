@@ -52,12 +52,15 @@ class AugmentedBlock(nn.Module):
 
         self.x_embed = nn.Linear(in_features=in_channels, out_features=out_channels)
         self.aug_embed = nn.Linear(in_features=in_channels, out_features=out_channels)
+        self.bn = nn.BatchNorm1d(num_features=out_channels)
 
     def forward(self, x, aug = None):
         x = self.x_embed(x) 
         if aug is not None:
             x += self.aug_embed(aug)
-        return self.act(x)
+
+        x = self.bn(self.act(x))
+        return x
     
 
 

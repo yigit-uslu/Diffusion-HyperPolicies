@@ -94,7 +94,12 @@ class LambdaSampler(nn.Module):
 class WeightedLambdaSampler(LambdaSampler):
     def __init__(self, samples, weights, device = 'cpu'):
         super(WeightedLambdaSampler, self).__init__(device=device)
+        # self.update_samples(samples=samples, weights=weights)
         self.unweighted_samples = samples 
+        self.weights = weights
+
+    def update_samples(self, samples, weights):
+        self.unweighted_samples = samples
         self.weights = weights
 
     def importance_sample(self, n_samples, replacement = True):
@@ -129,6 +134,22 @@ class WeightedLambdaSampler(LambdaSampler):
                                              )
             
         return lambdas
+    
+
+
+class SequentialWeightedLambdaSampler(WeightedLambdaSampler):
+    def __init__(self, samples, weights, alpha = 0.1, max_stored_samples = config.batch_size_lambdas * 10, device='cpu'):
+        super().__init__(samples, weights, device)
+        self.alpha = alpha # new samples are equally as importnnt as the old ones when alpha = 0.5
+        self.max_stored_samples = max_stored_samples
+
+    def update_samples(self, samples, weights):
+        self.unweighted_samples = torch.cat((self.unweighted_samples, samples), dim = 0)
+        self.weights = torch.cat(((1 - self.alpha) * self.weights, self.alpha * weights), dim = 0)
+
+        self.unweighted_samples = self.unweighted_samples[-self.max_stored_samples:] if len(self.unweighted_samples) > self.max_stored_samples else self.unweighted_samples
+        self.weights = self.weights[-self.max_stored_samples:] if len(self.weights) > self.max_stored_samples else self.weights
+        
 
 
 
