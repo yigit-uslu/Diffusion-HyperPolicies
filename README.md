@@ -10,4 +10,5 @@ First idea:
 
 TO DO:
 > Reset tau every K epochs to encourage exploration.
+
 > Plot state-augmented dual trajectories and compare with diffusion-sampler.

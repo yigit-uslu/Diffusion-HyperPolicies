@@ -68,7 +68,7 @@ def main():
         all_aug_rewards = []
         while not all(done) and t < num_timesteps:
             action_mask = env.get_invalid_action_mask(states=state)
-            action = agent.select_action((state, lambdas), action_mask)
+            action, probs = agent.select_action((state, lambdas), action_mask)
             next_state, reward, done = env.step(action)
             agent.store_experience((state, lambdas), action, reward, next_state, done)
             ac_loss, aug_rewards = agent.optimize(epoch=episode)

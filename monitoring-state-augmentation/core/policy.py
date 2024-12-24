@@ -110,8 +110,6 @@ class DQNPolicy(nn.Module):
 
 
 
-
-
 class Agent(nn.Module):
     def __init__(self, device = 'cpu'):
         super().__init__()
@@ -165,7 +163,7 @@ class DQNAgent(nn.Module):
     #         q_values = self.policy_net(state.to(self.device), lambdas.to(self.device))
     #         return torch.argmax(q_values).item()  # Best action (exploitation)
 
-        self.loggers = make_rl_train_loggers(log_path = f"./logs/{EXPERIMENT_NAME}/rl-train")
+        self.loggers = make_rl_train_loggers(log_path = f"./logs/{EXPERIMENT_NAME}/sa-rl-train")
         
 
     def select_action(self, augmented_state, action_mask = None):
@@ -175,21 +173,24 @@ class DQNAgent(nn.Module):
             state_tensor = state.clone().to(self.device)
         else:
             state_tensor = torch.tensor(state).unsqueeze(0).to(self.device)
-        Q_values = self.policy_net(x = state_tensor, lambdas = lambdas) # [n_lambdas, n_actions=n_states]
+        Q_values = self.policy_net(x = state_tensor, lambdas = lambdas.detach()) # [n_lambdas, n_actions=n_states]
 
-        action = self.softmax_selection(Q_values=Q_values, mask=action_mask)
-
+        action, probs = self.softmax_selection(Q_values=Q_values, mask=action_mask)
         eps = 1. * (torch.rand(size=action.size(), device = action.device) < self.epsilon) # boolean flag for random actions
+        
+        if self.policy_net.eval():
+            action = torch.argmax(probs, dim =  1).view_as(action)  # Best action (exploitation)
+            eps = 0.
+            
         # random_action = torch.randint_like(input=eps, low=0, high=config.num_states)
-        random_action = self.softmax_selection(Q_values=torch.ones_like(Q_values), mask=action_mask)
+        random_action, _ = self.softmax_selection(Q_values=torch.ones_like(Q_values), mask=action_mask)
 
         action = (1. - eps) * action + eps * random_action
 
-        return action
+        return action, probs
     
     
     def softmax_selection(self, Q_values, mask = None):
-
 
         temperature = self.exploration_temperature
 
@@ -219,7 +220,7 @@ class DQNAgent(nn.Module):
         actions = torch.multinomial(prob, 1)  # Sample actions for each row (state) in the batch
         
         # Select action based on probabilities
-        return actions.squeeze(-1) # Remove the extra dimension, returning a 1D tensor of actions
+        return actions.squeeze(-1), prob # Remove the extra dimension, returning a 1D tensor of actions
     
         
     def store_experience(self, state, action, reward, next_state, done):

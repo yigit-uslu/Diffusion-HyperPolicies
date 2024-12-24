@@ -94,7 +94,7 @@ class CustomLRScheduler(abc.ABC):
 def make_kl_regularization_decay_scheduler(config, schedule = "linear", device = "cpu"):
     
     if schedule == "linear":
-        tau_scheduler = CustomLRScheduler(lr_end=config.tau, step_size=config.tau_step, gamma=config.tau_gamma, log_path = f"./logs/{config.experiment_name}", log_metric = "tau")
+        tau_scheduler = CustomLRScheduler(lr_end=config.tau, step_size=config.tau_step, gamma=config.tau_gamma, log_path = f"./logs/{config.experiment_name}/importance-sampler", log_metric = "tau")
     else:
         raise NotImplementedError
     

@@ -44,11 +44,17 @@ class Logger(abc.ABC):
                 'log_metric': self.log_metric,
                 'log_path': self.log_path
                 }
-    
 
     @property
     def log_freq(self):
         return default_log_freq_rl
+    
+    # @log_freq.setter
+    # def loq_freq(self, new_log_freq):
+    #     if new_log_freq > 0 and isinstance(new_log_freq, int):
+    #         self.log_freq = new_log_freq
+    #     else:
+    #         raise ValueError("Log freq should be a positive integer!")
     
 
 
@@ -120,6 +126,13 @@ class DiffusionTrainLossLogger(Logger):
     @property
     def log_freq(self):
         return default_log_freq_dm
+    
+    # @log_freq.setter
+    # def loq_freq(self, new_log_freq):
+    #     if new_log_freq > 0 and isinstance(new_log_freq, int):
+    #         self.log_freq = new_log_freq
+    #     else:
+    #         raise ValueError("Log freq should be a positive integer!")
 
     def __call__(self):
 
@@ -162,10 +175,6 @@ class LambdaScatterLogger(Logger):
     def __init__(self, data, log_path):
         super(LambdaScatterLogger, self).__init__(data=data, log_metric='scatter-lambdas', log_path=log_path)
 
-    @property
-    def log_freq(self):
-        return default_log_freq_dm
-
     def update_data(self, new_data):
         self.reset_data() # do not concatenate results along epochs
 
@@ -178,13 +187,19 @@ class LambdaScatterLogger(Logger):
         data = new_data[self.log_metric]
         super().update_data( (epoch, data) )
 
-
     @property
     def log_freq(self):
         return default_log_freq_dm
+    
+    # @log_freq.setter
+    # def loq_freq(self, new_log_freq):
+    #     if new_log_freq > 0 and isinstance(new_log_freq, int):
+    #         self.log_freq = new_log_freq
+    #     else:
+    #         raise ValueError("Log freq should be a positive integer!")
+        
 
-
-    def __call__(self):
+    def __call__(self, lambdas_label = [None, None]):
 
         if not len(self.data):
             return
@@ -207,10 +222,10 @@ class LambdaScatterLogger(Logger):
             fig, ax = plt.subplots(1, 1, figsize = (8, 4))
 
             if df_lambdas is not None:
-                sns.scatterplot(x=df_lambdas[r"$\lambda_1$"], y=df_lambdas[r"$\lambda_2$"], marker = '1', alpha = 0.5, label = r"DDPM-sampled $\lambda$", ax = ax)
+                sns.scatterplot(x=df_lambdas[r"$\lambda_1$"], y=df_lambdas[r"$\lambda_2$"], marker = '1', alpha = 0.5, label = r"DDPM-sampled $\lambda$" if lambdas_label[0] is None else lambdas_label[0], ax = ax)
 
             if df_lambdas_orig is not None:
-                sns.scatterplot(x=df_lambdas_orig[r"$\lambda_1$"], y=df_lambdas_orig[r"$\lambda_2$"], marker = "o", alpha = 0.5, label = r"Imp.-sampled $\lambda$", ax = ax)
+                sns.scatterplot(x=df_lambdas_orig[r"$\lambda_1$"], y=df_lambdas_orig[r"$\lambda_2$"], marker = "o", alpha = 0.5, label = r"Imp.-sampled $\lambda$" if lambdas_label[1] is None else lambdas_label[1], ax = ax)
            
 
             ax.set_ylabel(self.log_metric)
@@ -246,7 +261,6 @@ class RLTrainRewardsLogger(RLTrainLossLogger):
         super().__init__(data, log_path)
         self.log_metric = 'rewards'
 
-
     def update_data(self, new_data):
         if self.log_metric not in new_data:
             return
@@ -257,12 +271,10 @@ class RLTrainRewardsLogger(RLTrainLossLogger):
         data = new_data[self.log_metric]
         Logger.update_data( self, (epoch, data) )
 
-
     def __call__(self):
 
         if not len(self.data):
             return
-
         try:
             epochs, L = zip(*self.data)
 
@@ -294,6 +306,337 @@ class RLTrainRewardsLogger(RLTrainLossLogger):
             plt.close(fig)
 
 
+class RLTestRewardsLogger(RLTrainLossLogger):
+    def __init__(self, data, log_path):
+        super().__init__(data, log_path)
+        self.log_metric = 'rewards'
+
+    def update_data(self, new_data):
+        self.reset_data() # do not append data
+        if self.log_metric not in new_data:
+            return
+        
+        if 'epoch' in new_data:
+            epoch = new_data['epoch']
+        else:
+            epoch = None
+        
+        data = new_data[self.log_metric]
+
+        Logger.update_data(self, (epoch, data))
+
+
+    def __call__(self):
+
+        if not len(self.data):
+            return
+        
+        try:
+            epochs, Ls = zip(*self.data)
+
+        except:
+            Ls = np.array(self.data)
+            # epochs = np.arange(len(L))
+
+        if self.log_path is not None and (epochs[-1] is None or (epochs[-1] + 1) % self.log_freq == 0):
+
+            for epoch, L in zip(epochs, Ls):
+                fig, ax = plt.subplots(1, 1, figsize = (6, 6))
+                for batch, l in enumerate(L):
+
+                    n_timesteps, n_rewards = l.shape
+
+                    ax.plot(np.arange(n_timesteps), l, label = [r"$r^{(" + str(batch) + ")}" + "_{" + str(i) + '}$' for i in range(n_rewards)])
+                ax.set_xlabel('Timestep (t)')
+                ax.set_ylabel(self.log_metric)
+                ax.legend(loc = 'best')
+                ax.grid(True)
+                fig.tight_layout()
+
+                os.makedirs(f"{self.log_path}", exist_ok=True)
+
+                if epoch is not None:
+                    plt.savefig(f'{self.log_path}/{self.log_metric}-epoch-{epoch}.pdf', dpi = 300)
+                else:
+                    plt.savefig(f'{self.log_path}/{self.log_metric}.pdf', dpi = 300)
+
+                plt.close(fig)
+
+
+                # Cumulative averages
+                fig, ax = plt.subplots(1, 1, figsize = (6, 6))
+                for batch, l in enumerate(L):
+
+                    l = np.divide(np.cumsum(l, axis = 0), np.cumsum(np.ones_like(l), axis = 0))
+
+                    n_timesteps, n_rewards = l.shape
+
+                    ax.plot(np.arange(n_timesteps), l, label = [r"$r^{(" + str(batch) + ")}" + "_{" + str(i) + '}$' for i in range(n_rewards)])
+                ax.set_xlabel('Timestep (t)')
+                ax.set_ylabel('ergodic-' + self.log_metric)
+                ax.legend(loc = 'best')
+                ax.grid(True)
+                fig.tight_layout()
+
+                os.makedirs(f"{self.log_path}", exist_ok=True)
+
+                if epoch is not None:
+                    plt.savefig(f'{self.log_path}/ergodic-{self.log_metric}-epoch-{epoch}.pdf', dpi = 300)
+                else:
+                    plt.savefig(f'{self.log_path}/ergodic-{self.log_metric}.pdf', dpi = 300)
+
+                plt.close(fig)
+
+
+
+class RLTestLambdasLogger(RLTrainLossLogger):
+    def __init__(self, data, log_path):
+        super().__init__(data, log_path)
+        self.log_metric = 'lambdas'
+
+    def update_data(self, new_data):
+        self.reset_data() # do not append data
+        if self.log_metric not in new_data:
+            return
+        
+        if 'epoch' in new_data:
+            epoch = new_data['epoch']
+        else:
+            epoch = None
+        
+        data = new_data[self.log_metric]
+
+        Logger.update_data(self, (epoch, data))
+
+
+    def __call__(self):
+
+        if not len(self.data):
+            return
+        
+        try:
+            epochs, Ls = zip(*self.data)
+
+        except:
+            Ls = np.array(self.data)
+            # epochs = np.arange(len(L))
+
+        if self.log_path is not None and (epochs[-1] is None or (epochs[-1] + 1) % self.log_freq == 0):
+
+            for epoch, L in zip(epochs, Ls):
+                fig, ax = plt.subplots(1, 1, figsize = (6, 6))
+                for batch, l in enumerate(L):
+
+                    # # Skip the current color in the default cycle by modifying rcParams
+                    # # current_colors = plt.cm.tab10.colors
+                    # current_colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+                    # plt.rcParams['axes.prop_cycle'] = plt.cycler(color=current_colors[1:])  # Skip the first color
+
+                    # Plot a dummy invisible line that won't appear in the legend
+                    ax.plot([0, 1, 2], [0, 1, 2], linewidth = 0.0, label='_nolegend_')
+
+
+                    n_timesteps, n_constraints = l.shape
+                    ax.plot(np.arange(n_timesteps), l, label = [r"$\lambda^{(" + str(batch) + ")}" + "_{" + str(i) + '}$' for i in range(1, n_constraints+1)])
+
+                ax.set_xlabel('Timestep (t)')
+                ax.set_ylabel(self.log_metric)
+                ax.legend(loc = 'best')
+                ax.grid(True)
+                fig.tight_layout()
+
+                os.makedirs(f"{self.log_path}", exist_ok=True)
+
+                if epoch is not None:
+                    plt.savefig(f'{self.log_path}/{self.log_metric}-epoch-{epoch}.pdf', dpi = 300)
+                else:
+                    plt.savefig(f'{self.log_path}/{self.log_metric}.pdf', dpi = 300)
+
+                plt.close(fig)
+
+
+class RLTestLambdaScatterLogger(LambdaScatterLogger):
+    def __init__(self, data, log_path):
+        super().__init__(data=data, log_path=log_path)
+
+    @property
+    def log_freq(self):
+        return default_log_freq_rl
+
+
+
+class RLTestActionProbsLogger(RLTrainLossLogger):
+    def __init__(self, data, log_path):
+        super().__init__(data, log_path)
+        self.log_metric = 'action-probs'
+
+    def update_data(self, new_data):
+        self.reset_data() # do not append data
+        if self.log_metric not in new_data:
+            return
+        
+        if 'epoch' in new_data:
+            epoch = new_data['epoch']
+        else:
+            epoch = None
+        
+        data = new_data[self.log_metric]
+
+        Logger.update_data(self, (epoch, data))
+
+
+    def __call__(self):
+
+        if not len(self.data):
+            return
+        
+        try:
+            epochs, Ls = zip(*self.data)
+
+        except:
+            Ls = np.array(self.data)
+            # epochs = np.arange(len(L))
+
+        if self.log_path is not None and (epochs[-1] is None or (epochs[-1] + 1) % self.log_freq == 0):
+
+            for epoch, L in zip(epochs, Ls):
+                fig, ax = plt.subplots(1, 1, figsize = (6, 6))
+                for batch, l in enumerate(L):
+
+                    n_timesteps, n_actions = l.shape
+
+                    ax.plot(np.arange(n_timesteps), l, label = [r"$\pi_{" + str(i) + "}" + "(s_t, \lambda_t)^{(" + str(batch) + ")}$" for i in range(n_actions)])
+                
+                ax.set_xlabel('Timestep (t)')
+                ax.set_ylabel(self.log_metric)
+                ax.legend(loc = 'best')
+                ax.grid(True)
+                fig.tight_layout()
+
+                os.makedirs(f"{self.log_path}", exist_ok=True)
+
+                if epoch is not None:
+                    plt.savefig(f'{self.log_path}/{self.log_metric}-epoch-{epoch}.pdf', dpi = 300)
+                else:
+                    plt.savefig(f'{self.log_path}/{self.log_metric}.pdf', dpi = 300)
+
+                plt.close(fig)
+
+
+class RLTestActionsLogger(RLTrainLossLogger):
+    def __init__(self, data, log_path):
+        super().__init__(data, log_path)
+        self.log_metric = 'actions'
+
+    def update_data(self, new_data):
+        self.reset_data() # do not append data
+        if self.log_metric not in new_data:
+            return
+        
+        if 'epoch' in new_data:
+            epoch = new_data['epoch']
+        else:
+            epoch = None
+        
+        data = new_data[self.log_metric]
+
+        Logger.update_data(self, (epoch, data))
+
+
+    def __call__(self):
+
+        if not len(self.data):
+            return
+        
+        try:
+            epochs, Ls = zip(*self.data)
+
+        except:
+            Ls = np.array(self.data)
+            # epochs = np.arange(len(L))
+
+        if self.log_path is not None and (epochs[-1] is None or (epochs[-1] + 1) % self.log_freq == 0):
+
+            for epoch, L in zip(epochs, Ls):
+                fig, ax = plt.subplots(1, 1, figsize = (6, 6))
+                for batch, l in enumerate(L):
+
+                    n_timesteps = l.shape[0]
+
+                    ax.plot(np.arange(n_timesteps), l, label = r"$a_t^{(" + str(batch) + ")}$")
+                ax.set_xlabel('Timestep (t)')
+                ax.set_ylabel(self.log_metric)
+                ax.legend(loc = 'best')
+                ax.grid(True)
+                fig.tight_layout()
+
+                os.makedirs(f"{self.log_path}", exist_ok=True)
+
+                if epoch is not None:
+                    plt.savefig(f'{self.log_path}/{self.log_metric}-epoch-{epoch}.pdf', dpi = 300)
+                else:
+                    plt.savefig(f'{self.log_path}/{self.log_metric}.pdf', dpi = 300)
+
+                plt.close(fig)
+
+
+class RLTestStatesLogger(RLTrainLossLogger):
+    def __init__(self, data, log_path):
+        super().__init__(data, log_path)
+        self.log_metric = 'states'
+
+    def update_data(self, new_data):
+        self.reset_data() # do not append data
+        if self.log_metric not in new_data:
+            return
+        
+        if 'epoch' in new_data:
+            epoch = new_data['epoch']
+        else:
+            epoch = None
+        
+        data = new_data[self.log_metric]
+
+        Logger.update_data(self, (epoch, data))
+
+
+    def __call__(self):
+
+        if not len(self.data):
+            return
+        
+        try:
+            epochs, Ls = zip(*self.data)
+
+        except:
+            Ls = np.array(self.data)
+            # epochs = np.arange(len(L))
+
+        if self.log_path is not None and (epochs[-1] is None or (epochs[-1] + 1) % self.log_freq == 0):
+
+            for epoch, L in zip(epochs, Ls):
+                fig, ax = plt.subplots(1, 1, figsize = (6, 6))
+                for batch, l in enumerate(L):
+
+                    n_timesteps = l.shape[0]
+
+                    ax.plot(np.arange(n_timesteps), l, label = r"$s_t^{(" + str(batch) + ")}$")
+                ax.set_xlabel('Timestep (t)')
+                ax.set_ylabel(self.log_metric)
+                ax.legend(loc = 'best')
+                ax.grid(True)
+                fig.tight_layout()
+
+                os.makedirs(f"{self.log_path}", exist_ok=True)
+
+                if epoch is not None:
+                    plt.savefig(f'{self.log_path}/{self.log_metric}-epoch-{epoch}.pdf', dpi = 300)
+                else:
+                    plt.savefig(f'{self.log_path}/{self.log_metric}.pdf', dpi = 300)
+
+                plt.close(fig)
+
+
     
 
 
@@ -301,7 +644,6 @@ class RLQTableLogger(Logger):
     def __init__(self, data, log_path):
         super().__init__(data, log_path = log_path, log_metric="Q_values")
         # self.log_metric = 'Q_values'
-
 
     def update_data(self, new_data):
         self.reset_data()
@@ -314,11 +656,9 @@ class RLQTableLogger(Logger):
         data = new_data[self.log_metric]
         super().update_data( (epoch, data) )
 
-
     # @property
     # def log_freq(self):
     #     return 50
-
 
     def __call__(self):
 
@@ -328,7 +668,6 @@ class RLQTableLogger(Logger):
         epoch, Q = zip(*self.data)
         epoch = epoch[0]
         Q = Q[0]
-
 
         if self.log_path is not None and (epoch + 1) % self.log_freq == 0: # and epoch + 1 % self.log_freq == 0:
 
@@ -376,7 +715,6 @@ class LagrangiansImportanceSamplerLogger(Logger):
 
         if not len(self.data):
             return
-        
         try:
             epochs, L = zip(*self.data)
 

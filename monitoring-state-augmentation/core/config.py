@@ -1,31 +1,38 @@
 from types import SimpleNamespace
 
-num_episodes = num_epochs = 5000
+num_episodes = num_epochs = 5000 # 5000
 num_iters_per_epoch = 10
 
-batch_size_lambdas = 100 # 500
+batch_size_lambdas = 50 # 500
 
 default_log_freq_rl = num_episodes // 100 # 20
 default_log_freq_dm = num_episodes // 20
 
-config_dict = {"experiment_name": "hyperpolicy-seq-importance-sampler-monday-evening-gamma=0.9-tau=50",
+config_dict = {"experiment_name": "hyperpolicy-seq-importance-sampler-dec-18-sa-rl-test-no-dm-lambdas-env1-always-explore-lambdas-sparsity=0.8",
+               "env": "v1",
                "num_states": 3,
                "num_episodes": num_episodes,
                "num_timesteps": 100,
-               "gamma": .9,
+               "gamma": .99,
                "epsilon": 0.0,
+               "epsilon_decay_rate": 1.0,
+               "epsilon_min": 0.001,
                "exploration_temperature": 1.0,
+               "exploration_temperature_decay_rate": 1.0,
+               "exploration_temperature_min": 0.1,
                "batch_size_t": 20,
                "batch_size_lambdas": batch_size_lambdas,
                "lambdas_max": 5.0,
                "lambdas_sampler_alpha": 0.9,
-               "dqn_num_features_list": [64, 64, 64],
-               "lr": 1e-3,
+               "lambdas_sparsity": 0.8,
+               "dqn_num_features_list": [64, 64, 64, 64],
+               "lr": 1e-4,
+               "lr_lambdas": 0.1,
                "weight_decay": 1e-3,
-               "tau": 50., # inverse parameter of kl-regularization strength (ideally infinite)
+               "tau": 10., # inverse parameter of kl-regularization strength (ideally infinite)
                "tau_gamma": 1.05,
                "tau_step": 5,
-               "diffusion_loss_thresh": 0.20,
+               "diffusion_loss_thresh": 0.02, # 0.2
                "diffusion_config":
                {
                  "diffusion_steps": 200,
